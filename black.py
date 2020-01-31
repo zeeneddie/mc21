@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-import os, random
+import os, random, time
 from enum import IntEnum
 
-VALS = ['Ace', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'King',
-    'Queen', 'Jack']
+VALS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'Q', 'J', 'K']
 SUITS = ['Clubs', 'Heart', 'Diamond', 'Spades']
 
 class Card(object):
@@ -11,7 +10,17 @@ class Card(object):
         self.suit = suit
         self.val = val
     def __str__(self):
-        return str(self.val) + ' of ' + str(self.suit)
+        if self.val == 'Blank':
+            return 'BLANK'
+        if self.suit == 'Clubs':
+            suit = '♣'
+        elif self.suit == 'Heart':
+            suit = '♥'
+        elif self.suit == 'Diamond':
+            suit = '♦'
+        elif self.suit == 'Spades':
+            suit = '♠'
+        return str(self.val) + ' ' + suit
 
 deck = []
 for decks in range(1): # FIXME: should be 8 decks
@@ -20,19 +29,12 @@ for decks in range(1): # FIXME: should be 8 decks
             deck.append(Card(suit, val))
 random.shuffle(deck)
 blank_card = Card('Plastic', 'Blank')
-rand_index = 20 + random.randint(-10,10)
+rand_index = 7 + random.randint(-5,5)
 deck.insert(rand_index, blank_card)
 
 used_cards = []
 cards_showing = []
 
-def reset(players):
-    for player in players:
-        while len(player.hand):
-            used_cards.append(player.hand.pop())
-        player.status = Status.PASS
-    cards_showing = []
-    
 def reshuffle():
     deck.extend(used_cards)
     random.shuffle(deck)
@@ -42,29 +44,22 @@ def reshuffle():
 def hand_val(hand, hard=False):
     val = 0
     for card in hand:
-        if card.val == 'King' or card.val == 'Queen' or card.val == 'Jack':
+        if card.val == 'K' or card.val == 'Q' or card.val == 'J':
             val += 10
-        elif card.val == 'Ace' and not hard:
+        elif card.val == 'A' and not hard:
             val += 11
-        elif card.val == 'Ace' and hard:
+        elif card.val == 'A' and hard:
             val += 1
         else:
             val += int(card.val)
     return val
 
-def better_hand(hand1, hand2):
-    if hand_val(hand1) > 21:
-        h1 = hand_val(hand1, hard=True)
-    else:
-        h1 = hand_val(hand1)
-    if hand_val(hand2) > 21:
-        h2 = hand_val(hand2, hard=True)
-    else:
-        h2 = hand_val(hand2)
-    if h1 > h2 and h1 <= 21:
-        return True
-    else:
-        return False
+def best_hand_val(hand):
+    if hand_val(hand, hard=True) > 21:
+        return 0
+    if hand_val(hand) <= 21:
+        return hand_val(hand) 
+    return hand_val(hand, hard=True)
 
 class Status(IntEnum):
     STAND = 0
@@ -76,7 +71,7 @@ class Player(object):
         self.status = Status.PASS
     def hit(self):
         card = deck.pop()
-        if card is blank_card:
+        if card.val is 'Blank':
             reshuffle()
             card = deck.pop()
         self.hand.append(card)
@@ -89,7 +84,7 @@ class Dealer(Player):
     def __init__(self):
         super().__init__()
     def move(self):
-        if hand_val(self.hand) >= 17:
+        if best_hand_val(self.hand) >= 17 or best_hand_val(self.hand) == 0:
             self.status = Status.STAND
         else:
             self.hit()
@@ -116,11 +111,31 @@ def deal_cards(players):
             player.hit()
 
 def clear_table(players):
+    cards_showing = []
     for player in players:
+        player.status = Status.PASS
         while len(player.hand):
             used_cards.append(player.hand.pop())
+
+def print_UI(dealer, player1, dealer_move=False):
+    os.system('cls' if os.name == 'nt' else 'clear')
+    # for card in deck:
+    #     print(card)
+    print('Balence:', player1.balence)
+    print('Wager:', player1.wager, '\n')
+    if dealer_move:
+        print('Dealer showing:', best_hand_val(dealer.hand))
+        for card in dealer.hand:
+            print(card)
+        print()
+    else:
+        print('Dealer showing:\n'+str(dealer.hand[0]), '\n')
+    print('Your hand:', best_hand_val(player1.hand))
+    for card in player1.hand:
+        print(card)
+
 def main():
-    player1 = UIPlayer(1000)
+    player1 = UIPlayer(200)
     dealer = Dealer()
     while player1.balence > 0:
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -128,35 +143,31 @@ def main():
         s = int(input('Place wager amount: '))
         player1.set_wager(s)
         deal_cards([dealer, player1])
-        while player1.status != Status.STAND:
-            if isinstance(player1, UIPlayer):
-                os.system('cls' if os.name == 'nt' else 'clear')
-                print('Balence:', player1.balence)
-                print('Wager:', player1.wager, '\n')
-                print('Dealer showing:\n'+str(dealer.hand[0]), '\n')
-                print('Your hand:')
-                for card in player1.hand:
-                    print(card)
-                print('\nCards on table:')
-                for card in cards_showing:
-                    print(card)
-                print('\nUsed cards:')
-                for card in used_cards:
-                    print(card)
-            player1.move()
+
+        # UI player loop
+        if isinstance(player1, UIPlayer):
+            while (player1.status != Status.STAND and
+                    hand_val(player1.hand, hard=True) < 21):
+                print_UI(dealer, player1)
+                player1.move()
+
+        # automated player loop TODO
+
+        # dealer plays loop
         while dealer.status != Status.STAND:
+            print_UI(dealer, player1, dealer_move=True)
+            time.sleep(1)
             dealer.move()
-        print('\nDealers hand:')
-        for card in dealer.hand:
-            print(card)
-        if better_hand(dealer.hand, player1.hand):
-            print('You lost', player1.wager)
+        dealer_hand_val = best_hand_val(dealer.hand)
+        player1_hand_val = best_hand_val(player1.hand)
+        if dealer_hand_val > player1_hand_val:
+            print('You lose', player1.wager)
             player1.balence -= player1.wager
-        if better_hand(player1.hand, dealer.hand):
-            print('You won', player1.wager)
+        if dealer_hand_val < player1_hand_val:
+            print('You win', player1.wager)
             player1.balence += player1.wager
         input('\nhit any key to continue ')
-        reset([dealer, player1])
+        clear_table([dealer, player1])
 
 if __name__ == '__main__':
     main()
