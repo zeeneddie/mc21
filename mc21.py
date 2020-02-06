@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import os, random, time, stastics
+import os, random, time, statistics
+from tqdm import tqdm
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -162,6 +163,35 @@ def print_UI(dealer, player1, dealer_move=False):
     print('Your hand:', best_hand_val(player1.hand))
     player1.disp_hand()
 
+def get_std(balences, t):
+    """
+    Finds the standard deviation of hand across different trials
+    at hand by:
+        * calculating the average balence across trial at hand
+        * compute average squared distance of the data points from the average
+          and take its square root
+    Args:
+        balences (list of lists or 2D array): balences[i][j] is the
+            number of balence in trial i at time hand j
+        t (int): time step
+
+    Returns:
+        float: the standard deviation of populations across different trials at
+             a specific time step
+    """
+    u = np.mean(balences[:][t]) # all hands trial t
+    rho2 = 0 # not actual rho^2 yet
+    for x in balences[:][t]:
+        rho2 += (x - u)**2
+    rho2 /= len(balences[:][t]) # okay, now it's rho^2
+    return rho2**0.5 # return rho
+
+def get_std_array(balences):
+    l = np.array([])
+    for i in range(len(balences[0][:])):
+        l = np.append(l, get_std(balences, i))
+    return l
+
 def UImain():
     player1 = UIPlayer(200)
     dealer = Dealer()
@@ -197,21 +227,19 @@ def UImain():
 
 def main():
     TRIALS = 1000
-    HANDS = 250
+    HANDS = 100
     winnings = np.empty([TRIALS, HANDS])
-    for i in range(TRIALS):
-        player1 = SimplePlayer(200)
+    for i in tqdm(range(TRIALS)):
+        player1 = SimplePlayer(1000)
         dealer = Dealer()
         players = [player1]
-        for j in range(HANDS): # hands
+        for j in range(HANDS):
             deal_cards([dealer] + players)
-            # print('Trial:', i, '\tHand:', j)
-
             winnings[i, j] = player1.balence
 
             # set wager
             for player in players:
-                player.set_wager(5)
+                player.set_wager(1)
 
             # player loop
             while sum([player.status for player in players]):
@@ -230,24 +258,38 @@ def main():
                 if player.balence <= 0:
                     continue
                 player_hand_val = best_hand_val(player.hand)
-                if player_hand_val > dealer_hand_val and player_hand_val <= 21:
+                if ((player_hand_val == 21 and len(player.hand) == 2) and
+                    not(dealer_hand_val == 21 and len(dealer.hand) == 2)):
+                    player.win()
+                elif (not(player_hand_val == 21 and len(player.hand) == 2) and
+                    (dealer_hand_val == 21 and len(dealer.hand) == 2)):
                     player.lose()
-                if player_hand_val < dealer_hand_val and dealer_hand_val <= 21:
+                elif player_hand_val > dealer_hand_val and player_hand_val <= 21:
+                    player.win()
+                elif player_hand_val < dealer_hand_val and dealer_hand_val <= 21:
                     player.lose()
+
             clear_table([dealer]+players)
 
-    # plot results
+    # plot all simulated games
     t = np.arange(0, HANDS)
-    fig, ax = plt.subplots()
     for i in range(TRIALS):
-        ax.plot(t, winnings[:][i])
+        plt.plot(t, winnings[:][i])
+    plt.title('All simulated games')
+    plt.xlabel('Number of hands')
+    plt.ylabel('Balence')
     plt.show()
 
+    # plot average 
     t = np.arange(0, HANDS)
-    fig, ax = plt.subplots()
-    for i in range(HANDS):
-        pass
+    avg = np.mean(winnings, axis=0)
+    plt.plot(t, avg)
+    plt.show()
 
+    # plot 95% confidence interval
+    std = get_std_array(winnings)
+    plt.plot(t, std)
+    plt.show()
 
 if __name__ == '__main__':
     main()
