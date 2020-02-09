@@ -2,12 +2,12 @@
 import os, random, time, statistics, matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from multiprocessing import Process, Pool
 from enum import IntEnum
 from tqdm import tqdm
 
-random.seed(0) # for repeatable results...
 
-VALS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'Q', 'J', 'K']
+VALS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10','J', 'Q', 'K']
 SUITS = ['Clubs', 'Heart', 'Diamond', 'Spades']
 
 class Card(object):
@@ -27,88 +27,78 @@ class Card(object):
             suit = '♠'
         return str(self.val) + ' ' + suit
 
-deck = []
-for decks in range(8):
-    for val in VALS:
-        for suit in SUITS:
-            deck.append(Card(suit, val))
-random.shuffle(deck)
-blank_card = Card('Plastic', 'Blank')
-rand_index = 8 + random.randint(-4,4)
-deck.insert(rand_index, blank_card)
-
-used_cards = []
-cards_showing = []
-
-def reshuffle():
-    """ Once the Blank card has been removed from the deck,
-    reshuffle combines used cards and remaining cards,
-    shuffles, and re-inserts the Blank card """
-    deck.extend(used_cards)
-    random.shuffle(deck)
-    rand_index = 20 + random.randint(-10,10)
-    deck.insert(rand_index, blank_card)
-    
-def hand_val(hand, hard=False):
-    """ returns the value of hand
-    if hard is true Aces are 1 otherwise Aces are 11 """
-    val = 0
-    for card in hand:
-        if card.val == 'K' or card.val == 'Q' or card.val == 'J':
-            val += 10
-        elif card.val == 'A' and not hard:
-            val += 11
-        elif card.val == 'A' and hard:
-            val += 1
-        else:
-            val += int(card.val)
-    return val
-
-def best_hand_val(hand):
-    """ returns most favorable value of hand """
-    if hand_val(hand, hard=True) > 21:
-        return 0
-    if hand_val(hand) <= 21:
-        return hand_val(hand) 
-    return hand_val(hand, hard=True)
-
 class Status(IntEnum):
     STAND = 0
     PLAY = 1
 
 class Player(object):
-    def __init__(self, balence=0):
+    def __init__(self, balence, deck, used_cards, cards_showing):
         self.hand = []
         self.status = Status.PLAY
-        self.balence = balence
         self.wager = 0
+        self.balence = balence
+        self.deck = deck
+        self.used_cards = used_cards
+        self.cards_showing = cards_showing
+    def reshuffle(self):
+        self.deck.extend(self.used_cards)
+        random.shuffle(self.deck)
+        rand_index = 8 + random.randint(-4, 4)
+        blank_card = Card('Plastic', 'Blank')
+        self.deck.insert(rand_index, blank_card)
     def set_wager(self, wager):
         self.wager = wager
     def hit(self):
-        card = deck.pop()
+        card = self.deck.pop()
         if card.val is 'Blank':
-            reshuffle()
-            card = deck.pop()
+            self.reshuffle()
+            card = self.deck.pop()
         self.hand.append(card)
         if not (isinstance(self, Dealer) and len(self.hand) == 2):
-            cards_showing.append(card)
-    def win(self):
-        self.balence += self.wager
-    def lose(self):
-        self.balence -= self.wager
+            self.cards_showing.append(card)
+    def win(self, mult=1.0):
+        self.balence += self.wager*mult
+    def lose(self, mult=1.0):
+        self.balence -= self.wager*mult
     def disp_hand(self):
         for card in self.hand:
             print(card)
+    def hand_val(self, hard=False):
+        """ returns the value of hand
+        if hard is true Aces are 1 otherwise Aces are 11 """
+        val = 0
+        for card in self.hand:
+            if card.val == 'K' or card.val == 'Q' or card.val == 'J':
+                val += 10
+            elif card.val == 'A' and not hard:
+                val += 11
+            elif card.val == 'A' and hard:
+                val += 1
+            else:
+                val += int(card.val)
+        return val
+    def best_hand_val(self):
+        """ returns most favorable value of hand """
+        if self.hand_val(hard=True) > 21:
+            return 0
+        if self.hand_val() <= 21:
+            return self.hand_val()
+        return self.hand_val(hard=True)
+    def has_blackjack(self):
+        return self.hand_val() == 21 and len(self.hand) == 2
     def move(self):
         """ Implemented in child classes only """
         raise NotImplementedError
 
 class Dealer(Player):
-    def __init__(self):
+    def __init__(self, deck, used_cards, cards_showing):
         self.hand = []
         self.status = Status.PLAY
+        self.deck = deck
+        self.used_cards = used_cards
+        self.cards_showing = cards_showing
     def move(self):
-        if best_hand_val(self.hand) >= 17 or best_hand_val(self.hand) == 0:
+        if self.best_hand_val() >= 17 or self.best_hand_val() == 0:
             self.status = Status.STAND
         else:
             self.hit()
@@ -126,17 +116,17 @@ class UIPlayer(Player):
             print('Must enter S or H')
 
 class SimplePlayer(Player):
-    def __init__(self, balence):
-        super().__init__(balence)
+    def __init__(self, balence, deck, used_cards, cards_showing):
+        super().__init__(balence, deck, used_cards, cards_showing)
     def move(self):
-        if best_hand_val(self.hand) >= 17 or best_hand_val(self.hand) == 0:
+        if self.best_hand_val() >= 17 or self.best_hand_val() == 0:
             self.status = Status.STAND
         else:
             self.hit()
 
 class CCPlayer(Player):
     """ Card Counting Player """
-    pass
+    pass # TODO
 
 def deal_cards(players):
     for i in range(2):
@@ -148,7 +138,7 @@ def clear_table(players):
     for player in players:
         player.status = Status.PLAY
         while len(player.hand):
-            used_cards.append(player.hand.pop())
+            player.used_cards.append(player.hand.pop())
 
 def print_UI(dealer, player1, dealer_move=False):
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -195,56 +185,74 @@ def UImain():
         input('\nhit any key to continue ')
         clear_table([dealer, player1])
 
+def simulate_trial(num_hands):
+    """ returns balence_log array for player one during simulated number of hands """
+    balence_log = []
+    # init cards 
+    used_cards = []
+    cards_showing = []
+    deck = []
+    for decks in range(8):
+        for val in VALS:
+            for suit in SUITS:
+                deck.append(Card(suit, val))
+    random.shuffle(deck)
+    blank_card = Card('Plastic', 'Blank')
+    rand_index = 8 + random.randint(-4,4)
+    deck.insert(rand_index, blank_card)
+
+
+    player1 = SimplePlayer(0, deck, used_cards, cards_showing)
+    dealer = Dealer(deck, used_cards, cards_showing)
+    players = [player1]
+    for j in range(num_hands):
+        deal_cards([dealer] + players)
+        balence_log.append(player1.balence)
+
+        # set wager
+        for player in players:
+            player.set_wager(1)
+
+        # player loop
+        while sum([player.status for player in players]):
+            for player in players:
+                if player.status == Status.STAND:
+                    continue
+                player.move()
+
+        # dealer loop
+        while dealer.status != Status.STAND:
+            dealer.move()
+
+        # eval hands
+        dealer_hand_val = dealer.best_hand_val()
+        for player in players:
+            p_hand_val = player.best_hand_val()
+            if p_hand_val > 21 or p_hand_val <= 0:
+                player.lose()
+            elif player.has_blackjack() and not dealer.has_blackjack(): 
+                player.win()
+            elif not player.has_blackjack() and dealer.has_blackjack(): 
+                player.lose()
+            elif p_hand_val > dealer_hand_val:
+                player.win()
+            elif p_hand_val < dealer_hand_val:
+                player.lose()
+
+        clear_table([dealer]+players)
+
+    return balence_log
+
 def main():
     # the great question:
     # how many trials do we need to have enough confidence?
-    TRIALS = 8
-    HANDS = 750000
+    TRIALS = 20
+    HANDS = 35
     winnings = np.empty([TRIALS, HANDS])
-    for i in tqdm(range(TRIALS)):
-        player1 = SimplePlayer(10)
-        dealer = Dealer()
-        players = [player1]
-        for j in range(HANDS):
-            random.seed(i*HANDS + j) # for repeatable results...
-            deal_cards([dealer] + players)
-            winnings[i][j] = player1.balence
-
-            # set wager
-            for player in players:
-                player.set_wager(1)
-
-            # player loop
-            while sum([player.status for player in players]):
-                for player in players:
-                    if player.status == Status.STAND:
-                        continue
-                    player.move()
-
-            # dealer loop
-            while dealer.status != Status.STAND:
-                dealer.move()
-
-            # eval hands
-            dealer_hand_val = best_hand_val(dealer.hand)
-            for player in players:
-                #if player.balence <= 0:
-                #    continue
-                p_hand_val = best_hand_val(player.hand)
-                if p_hand_val > 21:
-                    player.lose()
-                elif ((p_hand_val == 21 and len(player.hand) == 2) and
-                    not(dealer_hand_val == 21 and len(dealer.hand) == 2)):
-                    player.win()
-                elif (not(p_hand_val == 21 and len(player.hand) == 2) and
-                    (dealer_hand_val == 21 and len(dealer.hand) == 2)):
-                    player.lose()
-                elif p_hand_val > dealer_hand_val and p_hand_val <= 21:
-                    player.win()
-                elif p_hand_val < dealer_hand_val and dealer_hand_val <= 21:
-                    player.lose()
-
-            clear_table([dealer]+players)
+    with Pool() as pool:
+        winnings = pool.map(simulate_trial, [HANDS]*TRIALS)
+    
+    winnings = np.array(winnings)
 
     # plot all simulated games
     t = np.arange(0, HANDS)
