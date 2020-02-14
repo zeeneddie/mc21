@@ -6,6 +6,8 @@ from multiprocessing import Process, Pool
 from enum import IntEnum
 from tqdm import tqdm
 
+TRIALS = 25
+HANDS = int(1e4)
 
 VALS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10','J', 'Q', 'K']
 SUITS = ['Clubs', 'Heart', 'Diamond', 'Spades']
@@ -14,6 +16,16 @@ class Card(object):
     def __init__(self, suit, val):
         self.suit = suit
         self.val = val
+    def get_num_val(self, hard=False):
+        if self.val == 'A':
+            if hard:
+                return 1
+            else:
+                return 11
+        if self.val == 'J' or self.val == 'Q' or self.val == 'K':
+            return 10
+        return int(self.val)
+
     def __str__(self):
         if self.val == 'Blank':
             return 'BLANK'
@@ -56,6 +68,10 @@ class Player(object):
         self.hand.append(card)
         if not (isinstance(self, Dealer) and len(self.hand) == 2):
             self.cards_showing.append(card)
+        if self.best_hand_val() == 0:
+            self.status = Status.STAND
+    def stand(self):
+        self.status = Status.STAND
     def win(self, mult=1.0):
         self.balence += self.wager*mult
     def lose(self, mult=1.0):
@@ -68,14 +84,7 @@ class Player(object):
         if hard is true Aces are 1 otherwise Aces are 11 """
         val = 0
         for card in self.hand:
-            if card.val == 'K' or card.val == 'Q' or card.val == 'J':
-                val += 10
-            elif card.val == 'A' and not hard:
-                val += 11
-            elif card.val == 'A' and hard:
-                val += 1
-            else:
-                val += int(card.val)
+            val += card.get_num_val(hard)
         return val
     def best_hand_val(self):
         """ returns most favorable value of hand """
@@ -104,8 +113,8 @@ class Dealer(Player):
             self.hit()
 
 class UIPlayer(Player):
-    def __init__(self, balence):
-        super().__init__(balence)
+    def __init__(self, balence, deck, used_cards, cards_showing):
+        super().__init__(balence, deck, used_cards, cards_showing)
     def move(self):
         s = input('S to stand, H to hit: ').lower()
         if s == 's':
@@ -124,9 +133,42 @@ class SimplePlayer(Player):
         else:
             self.hit()
 
+class StratPlayer(Player):
+    """ Strategy Board Player """
+    def __init__(self, balence, deck, used_cards, cards_showing, dealer):
+        super().__init__(balence, deck, used_cards, cards_showing)
+        self.dealer = dealer
+    def move(self):
+        have_ace = False
+        for card in self.hand:
+            if card.get_num_val == 1 or card.get_num_val == 11:
+                have_ace = True
+        dcard = self.dealer.hand[0]
+        if self.hand_val(hard=True) >= 17 or self.best_hand_val() == 0:
+            self.stand()
+        elif have_ace and len(self.hand) == 2:
+            if 9 <= self.hand_val(hard=False) <= 10:
+                self.stand()
+            elif self.hand_val(hard=False) == 7 and dcard.get_num_val <= 8:
+                self.stand()
+            else:
+                self.hit()
+        elif 13 <= self.hand_val(hard=True) <= 16:
+            if dcard.get_num_val() <= 6:
+                self.stand()
+            else:
+                self.hit()
+        elif self.hand_val(hard=True) == 12:
+            if 4 <= dcard.get_num_val() <= 6:
+                self.stand()
+            else:
+                self.hit()
+        else:
+            self.hit()
+
 class CCPlayer(Player):
     """ Card Counting Player """
-    pass # TODO
+    pass
 
 def deal_cards(players):
     for i in range(2):
@@ -145,17 +187,29 @@ def print_UI(dealer, player1, dealer_move=False):
     print('Balence:', player1.balence)
     print('Wager:', player1.wager, '\n')
     if dealer_move:
-        print('Dealer showing:', best_hand_val(dealer.hand))
+        print('Dealer showing:', dealer.best_hand_val())
         dealer.disp_hand()
         print()
     else:
         print('Dealer showing:\n'+str(dealer.hand[0]), '\n')
-    print('Your hand:', best_hand_val(player1.hand))
+    print('Your hand:', player1.best_hand_val())
     player1.disp_hand()
 
 def UImain():
-    player1 = UIPlayer(200)
-    dealer = Dealer()
+    used_cards = []
+    cards_showing = []
+    deck = []
+    for decks in range(8):
+        for val in VALS:
+            for suit in SUITS:
+                deck.append(Card(suit, val))
+    random.shuffle(deck)
+    blank_card = Card('Plastic', 'Blank')
+    rand_index = 8 + random.randint(-4,4)
+    deck.insert(rand_index, blank_card)
+
+    player1 = UIPlayer(200.0, deck, used_cards, cards_showing)
+    dealer = Dealer(deck, used_cards, cards_showing)
     while player1.balence > 0:
         os.system('cls' if os.name == 'nt' else 'clear')
         print('Balence:', player1.balence)
@@ -174,14 +228,25 @@ def UImain():
             time.sleep(1)
         print_UI(dealer, player1, dealer_move=True)
 
-        dealer_hand_val = best_hand_val(dealer.hand)
-        player1_hand_val = best_hand_val(player1.hand)
-        if dealer_hand_val > player1_hand_val:
+        dealer_hand_val = dealer.best_hand_val()
+        p_hand_val = player1.best_hand_val()
+        
+        if p_hand_val > 21 or p_hand_val <= 0:
             print('You lose', player1.wager)
-            player1.balence -= player1.wager
-        if dealer_hand_val < player1_hand_val:
+            player1.lose()
+        elif player1.has_blackjack() and not dealer.has_blackjack(): 
             print('You win', player1.wager)
-            player1.balence += player1.wager
+            player1.win()
+        elif not player1.has_blackjack() and dealer.has_blackjack(): 
+            print('You lose', player1.wager)
+            player1.lose()
+        elif p_hand_val > dealer_hand_val:
+            print('You win', player1.wager)
+            player1.win()
+        elif p_hand_val < dealer_hand_val:
+            print('You lose', player1.wager)
+            player1.lose()
+
         input('\nhit any key to continue ')
         clear_table([dealer, player1])
 
@@ -201,9 +266,11 @@ def simulate_trial(num_hands):
     rand_index = 8 + random.randint(-4,4)
     deck.insert(rand_index, blank_card)
 
-
-    player1 = SimplePlayer(0, deck, used_cards, cards_showing)
     dealer = Dealer(deck, used_cards, cards_showing)
+    """"""
+    player1 = SimplePlayer(0, deck, used_cards, cards_showing)
+    # player1 = StratPlayer(0, deck, used_cards, cards_showing, dealer)
+
     players = [player1]
     for j in range(num_hands):
         deal_cards([dealer] + players)
@@ -240,14 +307,11 @@ def simulate_trial(num_hands):
                 player.lose()
 
         clear_table([dealer]+players)
-
     return balence_log
 
 def main():
     # the great question:
     # how many trials do we need to have enough confidence?
-    TRIALS = 20
-    HANDS = 35
     winnings = np.empty([TRIALS, HANDS])
     with Pool() as pool:
         winnings = pool.map(simulate_trial, [HANDS]*TRIALS)
@@ -261,30 +325,14 @@ def main():
     plt.title(str(TRIALS)+' simulated games')
     plt.xlabel('Number of hands played')
     plt.ylabel('Balence')
-    plt.show()
-
-    # plot average 
     t = np.arange(0, HANDS)
     avg = np.mean(winnings, axis=0)
-#    plt.plot(t, avg)
-#    plt.title('Average Balence')
-#    plt.xlabel('Number of hands played')
-#    plt.ylabel('$')
-#    plt.show()
-
-    # plot 95% confidence interval
-    ci95 = np.std(winnings, axis=0)*1.96
-#    plt.plot(t, ci95)
-#    plt.title('95% confidence interval')
-#    plt.ylabel('$')
-#    plt.xlabel('Number of hands played')
-#    plt.show()
-
-#    plt.plot(t, avg, t, avg-ci95, t, avg+ci95)
-#    plt.title('Average balence with 95% confidence interval bounds')
-#    plt.ylabel('$')
-#    plt.xlabel('Number of hands played')
-#    plt.show()
+    ci95 = np.std(winnings, axis=0)*1.96 # 95% confidence interval
+    plt.plot(t, avg, 'k', t, avg-ci95, 'k--', t, avg+ci95, 'k--')
+    plt.xlabel('Number of hands played')
+    print('exp return:', str(round((avg[-1]/HANDS*100), 4))+'+/-'
+            +str(round((ci95[-1]/HANDS*100), 4))+'%')
+    plt.show()
 
 if __name__ == '__main__':
     main()
